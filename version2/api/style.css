@@ -1,0 +1,160 @@
+/* Dark theme across entire page */
+body {
+  background-color: #1a202c; /* A darker grayish-blue */
+  color: #e2e8f0;           /* Lighter text */
+  margin: 0;
+  padding: 0;
+  font-family: sans-serif;
+}
+
+.container {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 1rem;
+  /* If you want the container to also be #2d3748, uncomment:
+     background-color: #2d3748;
+  */
+}
+
+header, footer {
+  text-align: center;
+  margin-bottom: 1rem;
+}
+
+h1 {
+  font-size: 2.5rem;
+  margin-bottom: 0.5rem;
+}
+
+h2 {
+  font-size: 1.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.nav-buttons {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 1rem;
+}
+
+.nav-buttons button {
+  background-color: #2d3748;
+  border: none;
+  color: #e2e8f0;
+  padding: 0.5rem 1rem;
+  cursor: pointer;
+  border-radius: 4px;
+  margin: 0.5rem;
+  transition: background-color 0.2s ease;
+}
+
+.nav-buttons button:hover {
+  background-color: #4a5568;
+}
+
+input, textarea {
+  width: 100%;
+  padding: 0.5rem;
+  margin-bottom: 1rem;
+  border: 1px solid #4a5568;
+  border-radius: 4px;
+  background-color: #2d3748;
+  color: #e2e8f0;
+}
+
+/* The post box */
+.post {
+  position: relative; /* For positioning reply button */
+  background-color: #2d3748;
+  padding: 1rem;
+  border-radius: 4px;
+  margin-bottom: 1rem;
+}
+
+/* By default, images and videos take full width unless constrained */
+.post img,
+.post video {
+  max-width: 100%;
+  display: block;
+  margin: 0 auto 1rem auto;
+}
+
+/* Thumbnail style for main board view */
+.thumbnail {
+  width: 75px;
+  height: 75px;
+  object-fit: cover;
+  margin: 0 auto 1rem auto;
+  display: block;
+}
+
+/* Fullsize style for thread (reply) view */
+.fullsize {
+  width: 250px;
+  height: 250px;
+  object-fit: cover;
+  margin: 0 auto 1rem auto;
+  display: block;
+}
+
+.form-box {
+  background-color: #2d3748;
+  padding: 1rem;
+  border-radius: 4px;
+  margin-bottom: 1rem;
+}
+
+/* Reply button */
+.reply-button {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  background-color: #2b6cb0;
+  border: none;
+  color: #e2e8f0;
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+.reply-button:hover {
+  background-color: #4a5568;
+}
+
+/* Pagination */
+.pagination a,
+.pagination span {
+  display: inline-block;
+  margin: 0.25rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 4px;
+  text-decoration: none;
+}
+
+.pagination a {
+  background-color: #4a5568;
+  color: #e2e8f0;
+}
+
+.pagination a:hover {
+  background-color: #718096;
+}
+
+.pagination span {
+  background-color: #2d3748;
+  color: #e2e8f0;
+}
+
+/* Utility classes */
+.break-words {
+  word-wrap: break-word;
+}
+
+.info {
+  color: #a0aec0;
+}
+
+.error {
+  color: #e53e3e;
+}
