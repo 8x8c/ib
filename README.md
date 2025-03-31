@@ -9,7 +9,7 @@ version 3 - implemented mysql, discontinued htmx and js
 
 version 4 - improved version of 3- this uses static files to reduce server load
 
-
+version 5- far superior to all previous versions. run board.php to make the first post, it generates an index.html that board visitors land on. This is a serious start to a great app. 
 
 
 
