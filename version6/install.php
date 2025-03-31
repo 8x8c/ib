@@ -28,21 +28,19 @@ function rrmdir(string $dir): void {
 }
 
 try {
-    // -- 1) Drop & Recreate the entire database --
+    // 1) Drop & recreate the entire database
     $dbNoDB = new PDO("mysql:host=localhost", $dbUser, $dbPass, [
         PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION
     ]);
-    // Drop
     $dbNoDB->exec("DROP DATABASE IF EXISTS articles_db");
-    // Recreate
     $dbNoDB->exec("CREATE DATABASE articles_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
 
-    // -- 2) Connect to that database --
+    // 2) Connect to that database
     $db = new PDO($dsn, $dbUser, $dbPass, [
         PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION
     ]);
 
-    // -- 3) Create the `posts` table with a `board` column --
+    // 3) Create `posts` table with a `board` column
     $db->exec("
         CREATE TABLE posts (
           id        INT AUTO_INCREMENT PRIMARY KEY,
@@ -57,30 +55,27 @@ try {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ");
 
-    // -- 4) Insert a sample post into board '1' for demonstration --
+    // 4) Insert a sample post for board "1"
     $now = time();
     $stmt = $db->prepare("
         INSERT INTO posts (board, parent, name, subject, message, image, timestamp, bumped)
-        VALUES ('1', 0, :name, :subject, :message, '', :ts, :ts)
+        VALUES ('1', 0, 'Admin', 'Welcome to Board #1', 'Sample post on board #1.', '', :ts, :ts)
     ");
-    $stmt->execute([
-        ':name'    => 'Admin',
-        ':subject' => 'Welcome to Board #1',
-        ':message' => 'This is a sample post on board #1. Enjoy your stay!',
-        ':ts'      => $now
-    ]);
+    $stmt->execute([':ts' => $now]);
 
-    // -- 5) Generate 100 numeric board directories --
+    // 5) Generate numeric board folders (1..100)
     for ($i = 1; $i <= 100; $i++) {
         $boardDir = __DIR__ . '/' . $i;
 
-        // If it exists, remove
+        // Remove if exists
         if (is_dir($boardDir)) {
             rrmdir($boardDir);
         }
         mkdir($boardDir, 0777, true);
+        // Also create an uploads subfolder inside each board
+        mkdir($boardDir . '/uploads', 0777, true);
 
-        // Create the default static index.html with absolute paths:
+        // Default board index.html
         $defaultHtml = <<<HTML
 <!doctype html>
 <html>
@@ -134,7 +129,7 @@ HTML;
         file_put_contents($boardDir . '/index.html', $defaultHtml);
     }
 
-    echo "<p>Installation complete. Database dropped & recreated, table set up, boards 1-100 initialized.</p>";
+    echo "<p>Installation complete: DB dropped & recreated, boards 1–100 with /uploads each.</p>";
 } catch (PDOException $ex) {
     $msg = "Error: " . htmlspecialchars($ex->getMessage(), ENT_QUOTES, 'UTF-8');
     file_put_contents($errorLogFile, date('Y-m-d H:i:s') . " - " . $ex->getMessage() . "\n", FILE_APPEND);

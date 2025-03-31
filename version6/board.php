@@ -16,12 +16,6 @@ if (!isset($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
 }
 
-// We'll use one global upload folder
-$uploadDir = __DIR__ . '/uploads';
-if (!is_dir($uploadDir)) {
-    mkdir($uploadDir, 0777, true);
-}
-
 // connect DB
 try {
     $db = new PDO($dsn, $dbUser, $dbPass, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
@@ -30,51 +24,13 @@ try {
     die("DB connection failure: " . $ex->getMessage());
 }
 
-// Quick helper
-function h(string $s): string {
-    return htmlspecialchars($s, ENT_QUOTES, 'UTF-8');
-}
-function errorExit(string $msg): never {
-    logError($msg);
-    echo "<p style='color:red;'>Error: " . h($msg) . "</p>";
-    exit;
-}
-function redirect(string $url): never {
-    header("Location: $url");
-    exit;
-}
-
-/**
- * MIME-check
- */
-function verifyFileType(string $filepath, string $extension): bool {
-    if (function_exists('finfo_open')) {
-        $finfo = finfo_open(FILEINFO_MIME_TYPE);
-        $mime  = finfo_file($finfo, $filepath);
-        finfo_close($finfo);
-    } elseif (function_exists('mime_content_type')) {
-        $mime = mime_content_type($filepath);
-    } else {
-        $mime = '';
-    }
-    $imageMimes = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
-    $videoMimes = ['video/mp4'];
-
-    if (in_array($extension, ['png','jpg','jpeg','gif','webp']) && in_array($mime, $imageMimes)) {
-        return true;
-    }
-    if ($extension === 'mp4' && in_array($mime, $videoMimes)) {
-        return true;
-    }
-    return false;
-}
-
-// We won't display a dynamic board. We'll only handle POST.
+// If no POST, redirect to home (we do not do dynamic listings)
 if (!isset($_POST['submit_post'])) {
-    // If someone visits /board.php directly, show a simple message or redirect to /index.html:
-    redirect('/index.html');
+    header("Location: /index.html");
+    exit;
 }
 
+// If CSRF is enabled
 if ($enableCsrf) {
     $token = $_POST['csrf_token'] ?? '';
     if ($token !== ($_SESSION['csrf_token'] ?? '')) {
@@ -86,11 +42,11 @@ if ($enableCsrf) {
 $rateLimitSeconds = 10;
 $now = time();
 if (!empty($_SESSION['last_post_time']) && ($now - $_SESSION['last_post_time']) < $rateLimitSeconds) {
-    errorExit("You're posting too fast. Wait a few seconds.");
+    errorExit("Posting too fast. Wait a few seconds.");
 }
 $_SESSION['last_post_time'] = $now;
 
-// Grab form inputs
+// Gather form data
 $parent  = (int)($_POST['parent'] ?? 0);
 $message = trim($_POST['message'] ?? '');
 $name    = trim($_POST['name'] ?? 'Anonymous');
@@ -98,41 +54,48 @@ if ($name === '') {
     $name = 'Anonymous';
 }
 
-// Validate message
 if ($message === '') {
     errorExit("Message is required.");
 } elseif (strlen($message) > 20000) {
-    errorExit("Message cannot exceed 20,000 characters.");
+    errorExit("Message limit is 20,000 characters.");
 }
 
-// If parent=0, it's a new thread
+function h(string $s): string {
+    return htmlspecialchars($s, ENT_QUOTES, 'UTF-8');
+}
+function errorExit(string $msg): never {
+    logError($msg);
+    echo "<p style='color:red;'>Error: " . h($msg) . "</p>";
+    exit;
+}
+
+// Figure out the board
 if ($parent === 0) {
-    $board   = trim($_POST['board'] ?? '1'); // default to "1" if none
-    if ($board === '') {
-        $board = '1';
-    }
+    // It's a new thread
+    $board   = trim($_POST['board'] ?? '1');  // default to "1"
+    if ($board === '') $board = '1';
+
     $subject = trim($_POST['subject'] ?? '');
     if ($subject === '') {
-        errorExit("Subject is required for a new thread.");
+        errorExit("Subject required for a new thread.");
     } elseif (strlen($subject) > 100) {
         errorExit("Subject max length is 100.");
     }
 } else {
-    // It's a reply. We must find the parent's board from DB
+    // It's a reply. The board is whatever the parent's board is
     $stmt = $db->prepare("SELECT board FROM posts WHERE id=:pid LIMIT 1");
     $stmt->execute([':pid' => $parent]);
     $parentRow = $stmt->fetch(PDO::FETCH_ASSOC);
     if (!$parentRow) {
-        errorExit("Parent thread does not exist.");
+        errorExit("Parent thread not found.");
     }
-    $board   = $parentRow['board']; // Force the reply into the same board as the parent
-    $subject = "";                  // replies have no separate subject
+    $board   = $parentRow['board'];
+    $subject = "";
 }
 
-// Insert post
+// Insert the new post
 $db->beginTransaction();
 try {
-    // The new post: set "board" field
     $stmt = $db->prepare("
         INSERT INTO posts (board, parent, name, subject, message, image, timestamp, bumped)
         VALUES (:b, :p, :n, :s, :m, '', :ts, :ts)
@@ -147,7 +110,7 @@ try {
     ]);
     $postID = (int)$db->lastInsertId();
 
-    // If there's an uploaded file, handle it
+    // Handle file (if any)
     if (!empty($_FILES['image']['name'])) {
         if ($_FILES['image']['error'] === UPLOAD_ERR_OK) {
             $maxFileSize = 2 * 1024 * 1024;
@@ -160,12 +123,20 @@ try {
             if (!in_array($ext, $allowed)) {
                 throw new RuntimeException("Invalid file type: $ext");
             }
+
+            // Save into /{board}/uploads
+            $boardDir = __DIR__ . '/' . $board;
+            $uploadDir = $boardDir . '/uploads';
+            if (!is_dir($uploadDir)) {
+                mkdir($uploadDir, 0777, true);
+            }
+
             $tempPath  = $_FILES['image']['tmp_name'];
             $finalName = $postID . '.' . $ext;
             $destPath  = $uploadDir . '/' . $finalName;
 
             if (!move_uploaded_file($tempPath, $destPath)) {
-                throw new RuntimeException("Failed to move uploaded file.");
+                throw new RuntimeException("Failed moving uploaded file.");
             }
             // Double-check MIME
             if (!verifyFileType($destPath, $ext)) {
@@ -173,7 +144,7 @@ try {
                 throw new RuntimeException("File content does not match extension.");
             }
 
-            // Update the row with the filename
+            // Update DB row with the filename
             $upd = $db->prepare("UPDATE posts SET image=:img WHERE id=:pid");
             $upd->execute([':img' => $finalName, ':pid' => $postID]);
         } elseif ($_FILES['image']['error'] !== UPLOAD_ERR_NO_FILE) {
@@ -181,30 +152,31 @@ try {
         }
     }
 
-    // If it's a reply, bump the parent
+    // If reply, bump parent
     if ($parent !== 0) {
-        $upd2 = $db->prepare("UPDATE posts SET bumped=:bump WHERE id=:pid");
-        $upd2->execute([':bump' => $now, ':pid' => $parent]);
+        $upd2 = $db->prepare("UPDATE posts SET bumped=:b WHERE id=:pid");
+        $upd2->execute([':b' => $now, ':pid' => $parent]);
     }
 
     $db->commit();
 
-    // Re-generate the static pages
+    // Re-generate board pages
     regenerateStaticBoardPages($db, $board);
+    // Re-generate the thread page
     if ($parent === 0) {
-        // brand-new thread => generate its thread page
+        // brand-new thread => generate its own thread page
         regenerateStaticThreadPage($db, $board, $postID);
-        // redirect to new board's index
-        redirect("/{$board}/index.html");
+        header("Location: /{$board}/index.html");
     } else {
-        // reply => re-generate parent thread
+        // reply => refresh the parent thread page
         regenerateStaticThreadPage($db, $board, $parent);
-        redirect("/{$board}/thread_{$parent}.html");
+        header("Location: /{$board}/thread_{$parent}.html");
     }
+    exit;
 
 } catch (RuntimeException $ex) {
     $db->rollBack();
-    // If the post was inserted partially, remove it
+    // If partial insert
     if (!empty($postID)) {
         $del = $db->prepare("DELETE FROM posts WHERE id=:pid");
         $del->execute([':pid' => $postID]);
@@ -212,52 +184,74 @@ try {
     errorExit("Posting Failure: " . $ex->getMessage());
 }
 
-/**********************************************
- * generate static board pages
- **********************************************/
+/***************************************
+ * verifyFileType() checks actual MIME
+ ***************************************/
+function verifyFileType(string $filepath, string $extension): bool {
+    if (function_exists('finfo_open')) {
+        $finfo = finfo_open(FILEINFO_MIME_TYPE);
+        $mime  = finfo_file($finfo, $filepath);
+        finfo_close($finfo);
+    } elseif (function_exists('mime_content_type')) {
+        $mime = mime_content_type($filepath);
+    } else {
+        $mime = '';
+    }
+    $imageMimes = ['image/png','image/jpeg','image/gif','image/webp'];
+    $videoMimes = ['video/mp4'];
+
+    if (in_array($extension, ['png','jpg','jpeg','gif','webp']) && in_array($mime, $imageMimes)) {
+        return true;
+    }
+    if ($extension === 'mp4' && in_array($mime, $videoMimes)) {
+        return true;
+    }
+    return false;
+}
+
+/*****************************************
+ * Re-generate static board pages
+ *****************************************/
 function regenerateStaticBoardPages(PDO $db, string $board): void {
-    // We'll show 5 threads per page. Could make it a global or config.
     $threadsPerPage = 5;
 
-    // Clean up or create the board folder
     $boardDir = __DIR__ . '/' . $board;
     if (!is_dir($boardDir)) {
         mkdir($boardDir, 0777, true);
+        mkdir($boardDir . '/uploads', 0777, true);
     }
 
-    // Count how many top-level threads in this board
-    $stmtCount = $db->prepare("SELECT COUNT(*) FROM posts WHERE board=:b AND parent=0");
+    // Count top-level threads for this board
+    $stmtCount = $db->prepare("
+        SELECT COUNT(*) FROM posts 
+        WHERE board=:b AND parent=0
+    ");
     $stmtCount->execute([':b' => $board]);
     $totalThreads = (int)$stmtCount->fetchColumn();
 
-    // If no threads, just keep the default "no threads" index.html.
     if ($totalThreads < 1) {
-        // But if you want to rewrite the index.html to show 0 threads, do so.
-        // We'll do it anyway for consistency:
-        $html = renderStaticBoard($db, $board, $threadsPerPage, 1, 1);
+        // Write out an index.html that says no threads.
+        $html = renderBoardPage($db, $board, $threadsPerPage, 1, 1);
         file_put_contents($boardDir . '/index.html', $html);
         return;
     }
 
-    // We have threads, compute pages
     $totalPages = (int)ceil($totalThreads / $threadsPerPage);
-    // Generate each page: 1 => index.html, 2 => "2.html", etc.
     for ($page = 1; $page <= $totalPages; $page++) {
-        $html   = renderStaticBoard($db, $board, $threadsPerPage, $page, $totalPages);
-        $fname  = ($page === 1) ? 'index.html' : "{$page}.html";
+        $html = renderBoardPage($db, $board, $threadsPerPage, $page, $totalPages);
+        $fname = ($page === 1) ? 'index.html' : "$page.html";
         file_put_contents($boardDir . '/' . $fname, $html);
     }
 }
 
 /**
- * Generate the content of a single board page (like /1/index.html or /1/2.html).
+ * Render a single board page (like /1/index.html or /1/2.html)
  */
-function renderStaticBoard(PDO $db, string $board, int $threadsPerPage, int $currentPage, int $totalPages): string {
+function renderBoardPage(PDO $db, string $board, int $threadsPerPage, int $page, int $totalPages): string {
     ob_start();
-
-    // Show the new thread form
     ?>
     <h1>Board <?php echo h($board); ?></h1>
+    <!-- New Thread Form -->
     <form action="/board.php" method="post" enctype="multipart/form-data">
       <input type="hidden" name="board" value="<?php echo h($board); ?>">
       <table>
@@ -278,14 +272,14 @@ function renderStaticBoard(PDO $db, string $board, int $threadsPerPage, int $cur
           <td><input type="file" name="image"></td>
         </tr>
       </table>
-      <input type="hidden" name="csrf_token" value="<?php echo h($_SESSION['csrf_token']); ?>">
+      <input type="hidden" name="csrf_token" value="<?php echo h($_SESSION['csrf_token'] ?? ''); ?>">
       <input type="hidden" name="parent" value="0">
     </form>
     <hr>
     <?php
 
-    // Grab the correct set of top-level threads
-    $offset = ($currentPage - 1) * $threadsPerPage;
+    // Grab the threads for this page
+    $offset = ($page - 1) * $threadsPerPage;
     $stmt = $db->prepare("
       SELECT *, 
              (SELECT COUNT(*) FROM posts WHERE board=:b AND parent=p.id) as reply_count
@@ -294,91 +288,80 @@ function renderStaticBoard(PDO $db, string $board, int $threadsPerPage, int $cur
       ORDER BY bumped DESC
       LIMIT :lim OFFSET :off
     ");
-    $stmt->bindValue(':b', $board, PDO::PARAM_STR);
-    $stmt->bindValue(':lim', $threadsPerPage, PDO::PARAM_INT);
-    $stmt->bindValue(':off', $offset, PDO::PARAM_INT);
+    $stmt->bindValue(':b', $board);
+    $stmt->bindValue(':lim', $threadsPerPage, \PDO::PARAM_INT);
+    $stmt->bindValue(':off', $offset, \PDO::PARAM_INT);
     $stmt->execute();
-    $threads = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $threads = $stmt->fetchAll(\PDO::FETCH_ASSOC);
 
     if (!$threads) {
         echo "<p>No threads yet.</p>";
     } else {
         foreach ($threads as $t) {
-            $tid   = (int)$t['id'];
-            $time  = date('m/d/y (D) H:i:s', $t['timestamp']);
-            echo "<div class='thread'>";
-            if ($t['image']) {
-                $ext = strtolower(pathinfo($t['image'], PATHINFO_EXTENSION));
-                if ($ext === 'mp4') {
-                    echo "<div class='file'>
-                            <a href='/uploads/" . h($t['image']) . "' target='_blank'>
-                            <video src='/uploads/" . h($t['image']) . "' controls class='post-image'></video></a>
-                          </div>";
-                } else {
-                    echo "<div class='file'>
-                            <a href='/uploads/" . h($t['image']) . "' target='_blank'>
-                            <img src='/uploads/" . h($t['image']) . "' class='post-image'></a>
-                          </div>";
-                }
-            }
-            echo "<div class='post op'>";
-            echo "<p>
-                    <strong>" . h($t['subject']) . "</strong> 
-                    " . h($t['name']) . " 
-                    <time>{$time}</time> 
-                    <a href='thread_{$tid}.html'>[Reply]</a>
-                  </p>";
-            echo "<div class='body'>" . nl2br(h($t['message'])) . "</div>";
-            echo "</div>";
-            echo "</div><hr>";
+            $tid = (int)$t['id'];
+            showPostPreview($board, $t);
+            echo "<p><a href='thread_{$tid}.html'>[Reply]</a></p>";
+            echo "<hr>";
         }
     }
 
     // Pagination
     if ($totalPages > 1) {
         echo "<div class='pagination'>";
-        for ($p = 1; $p <= $totalPages; $p++) {
-            if ($p === $currentPage) {
-                echo " [{$p}] ";
+        for ($i = 1; $i <= $totalPages; $i++) {
+            if ($i === $page) {
+                echo " [{$i}] ";
             } else {
-                $file = ($p === 1) ? "index.html" : "{$p}.html";
-                echo " <a href='{$file}'>[{$p}]</a> ";
+                $link = ($i === 1) ? "index.html" : "{$i}.html";
+                echo " <a href='{$link}'>[{$i}]</a> ";
             }
         }
         echo "</div>";
     }
 
     $content = ob_get_clean();
-    return wrapHtml("Board {$board}", $content);
+    return wrapHtml("Board $board - Page $page", $content);
 }
 
-/**********************************************
- * generate static thread pages
- **********************************************/
+/*****************************************
+ * Re-generate a single thread page
+ *****************************************/
 function regenerateStaticThreadPage(PDO $db, string $board, int $threadID): void {
-    // Make sure the board folder exists
     $boardDir = __DIR__ . '/' . $board;
     if (!is_dir($boardDir)) {
         mkdir($boardDir, 0777, true);
+        mkdir($boardDir . '/uploads', 0777, true);
     }
 
-    // Fetch OP
-    $stmtOp = $db->prepare("SELECT * FROM posts WHERE id=:tid AND board=:b AND parent=0");
-    $stmtOp->execute([':tid' => $threadID, ':b' => $board]);
-    $op = $stmtOp->fetch(PDO::FETCH_ASSOC);
+    // Fetch the OP
+    $stmtOp = $db->prepare("
+      SELECT * FROM posts 
+      WHERE board=:b AND id=:tid AND parent=0
+    ");
+    $stmtOp->execute([':b' => $board, ':tid' => $threadID]);
+    $op = $stmtOp->fetch(\PDO::FETCH_ASSOC);
     if (!$op) {
-        // The OP is not found or not in this board, do nothing
+        // Thread not found or not in this board
         return;
     }
 
+    // Get replies
+    $stmtRep = $db->prepare("
+      SELECT * FROM posts
+      WHERE board=:b AND parent=:tid
+      ORDER BY timestamp ASC
+    ");
+    $stmtRep->execute([':b' => $board, ':tid' => $threadID]);
+    $replies = $stmtRep->fetchAll(\PDO::FETCH_ASSOC);
+
     ob_start();
-    // Quick reply form
     ?>
-    <h1>Thread #<?php echo $op['id']; ?> (Board <?php echo h($board); ?>)</h1>
+    <h1>Thread #<?php echo (int)$op['id']; ?> - Board <?php echo h($board); ?></h1>
+    <!-- Quick Reply Form -->
     <form action="/board.php" method="post" enctype="multipart/form-data">
-      <input type="hidden" name="csrf_token" value="<?php echo h($_SESSION['csrf_token']); ?>">
+      <input type="hidden" name="csrf_token" value="<?php echo h($_SESSION['csrf_token'] ?? ''); ?>">
       <input type="hidden" name="parent" value="<?php echo (int)$op['id']; ?>">
-      <!-- board is determined by the parent's board, but let's also include it for safety -->
+      <!-- board is deduced from the parent's board, but we also pass it for clarity -->
       <input type="hidden" name="board" value="<?php echo h($board); ?>">
       <textarea name="message" rows="4" cols="40" placeholder="Reply text"></textarea><br>
       <input type="file" name="image"><br>
@@ -387,60 +370,48 @@ function regenerateStaticThreadPage(PDO $db, string $board, int $threadID): void
     <hr>
     <?php
 
-    // Display the OP
-    showPost($op);
+    // Show the OP
+    showPostPreview($board, $op);
 
-    // Now fetch replies
-    $stmtRep = $db->prepare("SELECT * FROM posts WHERE board=:b AND parent=:tid ORDER BY timestamp ASC");
-    $stmtRep->execute([':b' => $board, ':tid' => $threadID]);
-    $replies = $stmtRep->fetchAll(PDO::FETCH_ASSOC);
-
+    // Show replies
     if ($replies) {
         foreach ($replies as $r) {
-            showPost($r);
+            showPostPreview($board, $r);
         }
     } else {
         echo "<p>No replies yet.</p>";
     }
 
-    $threadHtml = ob_get_clean();
-    $fullHtml   = wrapHtml("Thread #{$threadID} - Board {$board}", $threadHtml);
-
-    $filename = $boardDir . "/thread_{$threadID}.html";
-    file_put_contents($filename, $fullHtml);
+    $html = wrapHtml("Thread #{$threadID} - Board {$board}", ob_get_clean());
+    file_put_contents($boardDir . "/thread_{$threadID}.html", $html);
 }
 
 /**
- * Helper to display a single post record (OP or reply).
+ * showPostPreview() displays an OP or reply, including the image/video link to /{board}/uploads/{filename}
  */
-function showPost(array $row): void {
-    $time = date('m/d/y (D) H:i:s', $row['timestamp']);
+function showPostPreview(string $board, array $p): void {
+    $id    = (int)$p['id'];
+    $time  = date('m/d/y (D) H:i:s', $p['timestamp']);
+    $img   = $p['image'];
     echo "<div class='post'>";
-    if ($row['image'] !== '') {
-        $ext = strtolower(pathinfo($row['image'], PATHINFO_EXTENSION));
+    if ($img !== '') {
+        $ext = strtolower(pathinfo($img, PATHINFO_EXTENSION));
+        $url = "/{$board}/uploads/" . h($img);
         if ($ext === 'mp4') {
-            echo "<div class='file'>
-                    <a href='/uploads/" . h($row['image']) . "' target='_blank'>
-                    <video src='/uploads/" . h($row['image']) . "' controls class='post-image'></video></a>
-                  </div>";
+            echo "<div class='file'><a href='{$url}' target='_blank'>
+                  <video src='{$url}' controls class='post-image'></video></a></div>";
         } else {
-            echo "<div class='file'>
-                    <a href='/uploads/" . h($row['image']) . "' target='_blank'>
-                    <img src='/uploads/" . h($row['image']) . "' class='post-image'></a>
-                  </div>";
+            echo "<div class='file'><a href='{$url}' target='_blank'>
+                  <img src='{$url}' class='post-image'></a></div>";
         }
     }
-    echo "<p>
-            <strong>" . h($row['subject']) . "</strong> 
-            " . h($row['name']) . " 
-            <time>{$time}</time>
-          </p>";
-    echo "<div class='body'>" . nl2br(h($row['message'])) . "</div>";
-    echo "</div><hr>";
+    echo "<p><strong>" . h($p['subject']) . "</strong> " . h($p['name']) . " <time>{$time}</time></p>";
+    echo "<div class='body'>" . nl2br(h($p['message'])) . "</div>";
+    echo "</div>";
 }
 
 /**
- * Utility to wrap content in minimal HTML with absolute CSS/JS paths.
+ * Minimal HTML wrapper with absolute CSS/JS references
  */
 function wrapHtml(string $title, string $body): string {
     return <<<HTML
