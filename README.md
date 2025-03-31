@@ -7,7 +7,7 @@ version 2 - improved security over version 1
 
 version 3 - implemented mysql, discontinued htmx and js 
 
-
+version 4 - improved version of 3- this uses static files to reduce server load
 
 
 
