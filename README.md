@@ -1,4 +1,4 @@
-# Adelia - php imageboard
+# ib - php imageboard
 
 
 version 1 - very basic 
