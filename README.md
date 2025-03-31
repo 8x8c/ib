@@ -2,7 +2,9 @@
 
 
 version 1 - very basic 
+
 version 2 - improved security over version 1 
+
 version 3 - implemented mysql, discontinued htmx and js 
 
 
